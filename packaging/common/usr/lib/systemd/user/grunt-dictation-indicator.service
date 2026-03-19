@@ -1,0 +1,13 @@
+[Unit]
+Description=Grunt Dictation Tray Indicator
+After=graphical-session.target grunt-dictationd.service
+Wants=grunt-dictationd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/grunt-dictation/grunt-dictation-indicator
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

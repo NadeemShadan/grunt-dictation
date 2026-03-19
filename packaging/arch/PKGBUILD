@@ -1,0 +1,54 @@
+pkgname=grunt-dictation
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OS-level dictation helper using ffmpeg + whisper.cpp"
+arch=('x86_64' 'aarch64')
+url="https://github.com/nadeemshadan/grunt-dictation"
+license=('MIT')
+depends=('bash' 'ffmpeg' 'glibc' 'systemd')
+optdepends=(
+  'xdotool: text injection on X11 desktops'
+  'wtype: text injection on wlroots-based Wayland desktops'
+  'ydotool: text injection fallback for Wayland/KDE'
+  'wl-clipboard: clipboard integration on Wayland'
+  'xclip: clipboard integration on X11'
+  'python-gobject: tray indicator'
+  'libayatana-appindicator: tray indicator'
+  'libnotify: recording state notifications'
+)
+install=grunt-dictation.install
+source=()
+sha256sums=()
+
+package() {
+  local common_dir="$startdir/../common"
+  local whisper_src
+  local whisper_arch_key
+
+  case "$CARCH" in
+    x86_64)
+      whisper_src="$common_dir/vendor/whisper-cli/linux-x86_64/whisper-cli"
+      whisper_arch_key="amd64"
+      ;;
+    aarch64)
+      whisper_src="$common_dir/vendor/whisper-cli/linux-arm64/whisper-cli"
+      whisper_arch_key="arm64"
+      ;;
+    *)
+      echo "unsupported architecture: $CARCH" >&2
+      return 1
+      ;;
+  esac
+
+  install -Dm755 "$common_dir/usr/bin/grunt-dictationctl" "$pkgdir/usr/bin/grunt-dictationctl"
+  install -Dm755 "$common_dir/usr/lib/grunt-dictation/grunt-dictationd.sh" "$pkgdir/usr/lib/grunt-dictation/grunt-dictationd.sh"
+  install -Dm755 "$common_dir/usr/lib/grunt-dictation/install-whisper-cli.sh" "$pkgdir/usr/lib/grunt-dictation/install-whisper-cli.sh"
+  install -Dm755 "$whisper_src" "$pkgdir/usr/lib/grunt-dictation/whisper-cli.$whisper_arch_key"
+  install -Dm755 "$whisper_src" "$pkgdir/usr/lib/grunt-dictation/whisper-cli"
+  install -Dm755 "$common_dir/usr/lib/grunt-dictation/grunt-dictation-indicator" "$pkgdir/usr/lib/grunt-dictation/grunt-dictation-indicator"
+  install -Dm644 "$common_dir/usr/lib/systemd/user/grunt-dictationd.service" "$pkgdir/usr/lib/systemd/user/grunt-dictationd.service"
+  install -Dm644 "$common_dir/usr/lib/systemd/user/grunt-dictation-indicator.service" "$pkgdir/usr/lib/systemd/user/grunt-dictation-indicator.service"
+  install -Dm644 "$common_dir/etc/grunt-dictation/default.env" "$pkgdir/etc/grunt-dictation/default.env"
+  install -Dm644 "$startdir/../../README.md" "$pkgdir/usr/share/doc/grunt-dictation/README.md"
+  install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/grunt-dictation/LICENSE"
+}

@@ -1,0 +1,33 @@
+post_install() {
+  if [[ -x /usr/lib/grunt-dictation/install-whisper-cli.sh ]]; then
+    /usr/lib/grunt-dictation/install-whisper-cli.sh --source auto || true
+  fi
+
+  cat <<'MSG'
+grunt-dictation installed.
+
+First-time setup (run as your normal user, not root):
+  grunt-dictationctl setup
+
+Basic commands:
+  grunt-dictationctl toggle     # start / stop recording
+  grunt-dictationctl type-text  # type transcript into focused window
+  grunt-dictationctl copy-text  # copy transcript to clipboard
+MSG
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl list-users --no-legend 2>/dev/null | awk '{print $2}' | while read -r user; do
+      systemctl -M "${user}@.host" --user stop \
+        grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+      systemctl -M "${user}@.host" --user disable \
+        grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+    done
+  fi
+  systemctl --global disable grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+}

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Stop and disable services for all currently logged-in users.
+if command -v loginctl >/dev/null 2>&1; then
+  loginctl list-users --no-legend 2>/dev/null | awk '{print $2}' | while read -r user; do
+    systemctl -M "${user}@.host" --user stop \
+      grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+    systemctl -M "${user}@.host" --user disable \
+      grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+  done
+fi
+
+# Prevent services from auto-starting in future sessions.
+systemctl --global disable grunt-dictationd.service grunt-dictation-indicator.service 2>/dev/null || true
+
+exit 0

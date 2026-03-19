@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "placeholder whisper-cli (arm64) detected" >&2
+echo "replace /usr/lib/grunt-dictation/whisper-cli.arm64 with a real whisper.cpp whisper-cli build" >&2
+exit 1

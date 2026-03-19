@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${GRUNT_DICTATION_CONFIG:-/etc/grunt-dictation/default.env}"
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
+RUNTIME_DIR="${RUNTIME_DIR:-$RUNTIME_ROOT/grunt-dictation}"
+CONTROL_FIFO="$RUNTIME_DIR/control.fifo"
+STATE_FILE="$RUNTIME_DIR/state"
+TRANSCRIPT_FILE="$RUNTIME_DIR/transcript.latest.txt"
+SERVICE_NAME="grunt-dictationd.service"
+MODEL_PATH="${MODEL_PATH:-$HOME/.local/share/grunt-dictation/models/ggml-base.en.bin}"
+WHISPER_MODEL_URL="${WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin}"
+WHISPER_MODEL_SHA256="${WHISPER_MODEL_SHA256:-}"
+
+print_usage() {
+  cat <<'USAGE'
+Usage:
+  grunt-dictationctl setup             # first-time setup: enable and start service
+
+  grunt-dictationctl toggle            # start recording if idle, stop if recording
+
+  grunt-dictationctl record-start
+  grunt-dictationctl record-stop
+  grunt-dictationctl clear-text
+  grunt-dictationctl get-text
+  grunt-dictationctl copy-text
+  grunt-dictationctl type-text
+  grunt-dictationctl show-runtime
+
+  grunt-dictationctl service-enable
+  grunt-dictationctl service-disable
+  grunt-dictationctl service-start
+  grunt-dictationctl service-stop
+  grunt-dictationctl service-status
+
+  grunt-dictationctl download-model    # download default ggml-base.en model
+  grunt-dictationctl list-devices      # list available microphones
+USAGE
+}
+
+service_status() {
+  systemctl --user status "$SERVICE_NAME" --no-pager
+}
+
+ensure_fifo() {
+  if [[ ! -p "$CONTROL_FIFO" ]]; then
+    echo "control FIFO not found at $CONTROL_FIFO. Start the service first." >&2
+    exit 1
+  fi
+}
+
+send_command() {
+  ensure_fifo
+  printf '%s\n' "$1" > "$CONTROL_FIFO"
+}
+
+read_transcript() {
+  if [[ -f "$TRANSCRIPT_FILE" ]]; then
+    cat "$TRANSCRIPT_FILE"
+  fi
+}
+
+copy_text() {
+  local text
+  text="$(read_transcript)"
+  if [[ -z "$text" ]]; then
+    echo "no transcript available" >&2
+    exit 1
+  fi
+
+  if command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$text" | wl-copy
+    return
+  fi
+
+  if command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$text" | xclip -selection clipboard
+    return
+  fi
+
+  if command -v xsel >/dev/null 2>&1; then
+    printf '%s' "$text" | xsel --clipboard --input
+    return
+  fi
+
+  echo "no clipboard tool found (tried: wl-copy, xclip, xsel)" >&2
+  exit 1
+}
+
+type_text() {
+  local text
+  text="$(read_transcript)"
+  if [[ -z "$text" ]]; then
+    echo "no transcript available" >&2
+    exit 1
+  fi
+
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    # wtype works on KDE Plasma and wlroots compositors (not GNOME/Mutter).
+    # Run it and fall through on failure rather than trusting command -v alone.
+    if command -v wtype >/dev/null 2>&1 && wtype "$text" 2>/dev/null; then
+      return
+    fi
+
+    # ydotool works on any Wayland compositor but requires ydotoold to be running.
+    if command -v ydotool >/dev/null 2>&1 && ydotool type "$text" 2>/dev/null; then
+      return
+    fi
+
+    # XWayland fallback: DISPLAY may still be set under a Wayland session.
+    if [[ -n "${DISPLAY:-}" ]] && command -v xdotool >/dev/null 2>&1; then
+      xdotool type --clearmodifiers --delay 1 "$text"
+      return
+    fi
+
+    echo "no working text injection tool found." >&2
+    echo "  On GNOME Wayland: install ydotool and ensure ydotoold is running," >&2
+    echo "    or log in with an X11 session for xdotool support." >&2
+    echo "  On KDE Wayland:   install wtype." >&2
+    exit 1
+  fi
+
+  # X11
+  if command -v xdotool >/dev/null 2>&1; then
+    xdotool type --clearmodifiers --delay 1 "$text"
+    return
+  fi
+
+  echo "no text injection tool found (tried: xdotool)." >&2
+  echo "  Install xdotool: sudo apt install xdotool" >&2
+  exit 1
+}
+
+toggle() {
+  ensure_fifo
+  local state
+  state="$(cat "$STATE_FILE" 2>/dev/null || echo idle)"
+  if [[ "$state" == "recording" ]]; then
+    send_command record-stop
+  else
+    send_command record-start
+  fi
+}
+
+setup() {
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$SERVICE_NAME"
+  systemctl --user enable --now grunt-dictation-indicator.service 2>/dev/null || \
+    echo "note: tray indicator not started (install gir1.2-ayatanaappindicator3-0.1 to enable)"
+  echo "grunt-dictation service enabled and started."
+  download_model
+}
+
+download_model() {
+  local model_dir
+  model_dir="$(dirname "$MODEL_PATH")"
+
+  if [[ -f "$MODEL_PATH" ]]; then
+    echo "model already present at $MODEL_PATH"
+    return 0
+  fi
+
+  mkdir -p "$model_dir"
+  echo "downloading model to $MODEL_PATH ..."
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL "$WHISPER_MODEL_URL" -o "$MODEL_PATH"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$MODEL_PATH" "$WHISPER_MODEL_URL"
+  else
+    echo "neither curl nor wget found; cannot download model." >&2
+    exit 1
+  fi
+
+  if [[ -n "$WHISPER_MODEL_SHA256" ]]; then
+    echo "verifying checksum..."
+    if ! echo "$WHISPER_MODEL_SHA256  $MODEL_PATH" | sha256sum --check --quiet 2>/dev/null; then
+      echo "checksum mismatch — removing download" >&2
+      rm -f "$MODEL_PATH"
+      exit 1
+    fi
+    echo "checksum ok"
+  fi
+
+  echo "model ready at $MODEL_PATH"
+}
+
+list_devices() {
+  if command -v pactl >/dev/null 2>&1; then
+    echo "Available input devices (set AUDIO_DEVICE in /etc/grunt-dictation/default.env):"
+    pactl list sources short | awk '{print "  " $2}' | grep -v '\.monitor$' || true
+  elif command -v arecord >/dev/null 2>&1; then
+    echo "Available ALSA capture devices (set AUDIO_DEVICE in /etc/grunt-dictation/default.env):"
+    arecord -L 2>/dev/null | grep -v '^ ' | awk '{print "  " $0}' || true
+  else
+    echo "no audio listing tool found (tried: pactl, arecord)" >&2
+    exit 1
+  fi
+}
+
+show_runtime() {
+  echo "runtime_dir=$RUNTIME_DIR"
+  echo "control_fifo=$CONTROL_FIFO"
+  echo "state_file=$STATE_FILE"
+  echo "transcript_file=$TRANSCRIPT_FILE"
+  if [[ -f "$STATE_FILE" ]]; then
+    echo "state=$(cat "$STATE_FILE")"
+  fi
+}
+
+command="${1:-}"
+case "$command" in
+  toggle)
+    toggle
+    ;;
+  setup)
+    setup
+    ;;
+  download-model)
+    download_model
+    ;;
+  list-devices)
+    list_devices
+    ;;
+  service-enable)
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$SERVICE_NAME"
+    ;;
+  service-disable)
+    systemctl --user disable --now "$SERVICE_NAME"
+    ;;
+  service-start)
+    systemctl --user daemon-reload
+    systemctl --user start "$SERVICE_NAME"
+    ;;
+  service-stop)
+    systemctl --user stop "$SERVICE_NAME"
+    ;;
+  service-status)
+    service_status
+    ;;
+  record-start)
+    send_command record-start
+    ;;
+  record-stop)
+    send_command record-stop
+    ;;
+  clear-text)
+    send_command clear-text
+    ;;
+  get-text)
+    read_transcript
+    ;;
+  copy-text)
+    copy_text
+    ;;
+  type-text)
+    type_text
+    ;;
+  show-runtime)
+    show_runtime
+    ;;
+  *)
+    print_usage
+    exit 1
+    ;;
+esac

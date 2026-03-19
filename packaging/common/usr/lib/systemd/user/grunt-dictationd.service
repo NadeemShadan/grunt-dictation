@@ -1,0 +1,13 @@
+[Unit]
+Description=Grunt Dictation Daemon (whisper.cpp)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/grunt-dictation/grunt-dictationd.sh
+Restart=on-failure
+RestartSec=2
+Environment=GRUNT_DICTATION_CONFIG=/etc/grunt-dictation/default.env
+
+[Install]
+WantedBy=default.target

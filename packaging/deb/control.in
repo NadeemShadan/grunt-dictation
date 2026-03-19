@@ -1,0 +1,12 @@
+Package: grunt-dictation
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Nadeem Shadan <nadeemshadan@outlook.com>
+Depends: bash, coreutils, ffmpeg, systemd
+Recommends: xdotool, wl-clipboard | xclip, wtype | ydotool, curl | wget, gir1.2-ayatanaappindicator3-0.1, python3-gi, libnotify-bin
+Description: OS-level dictation helper using ffmpeg and whisper.cpp
+ Standalone speech-to-text helper for Linux desktops.
+ It runs as a user service, records audio, transcribes with whisper.cpp,
+ and injects text into the focused input via desktop-specific tools.

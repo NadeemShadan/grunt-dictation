@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Tray indicator for grunt-dictation.
+
+Shows a microphone icon in the system tray that changes colour with state:
+  grey   — idle / stopped
+  orange — recording
+  amber  — transcribing
+
+Requires AppIndicator3 or AyatanaAppIndicator3 (libayatana-appindicator).
+  Ubuntu:  sudo apt install gir1.2-ayatanaappindicator3-0.1
+  Arch:    sudo pacman -S libayatana-appindicator
+"""
+
+import os
+import sys
+import tempfile
+import subprocess
+
+RUNTIME_DIR = os.path.join(
+    os.environ.get('XDG_RUNTIME_DIR', '/tmp'), 'grunt-dictation'
+)
+STATE_FILE = os.path.join(RUNTIME_DIR, 'state')
+POLL_MS = 500
+
+COLORS = {
+    'idle':         '#9e9e9e',
+    'recording':    '#f57c00',
+    'transcribing': '#fbc02d',
+    'stopped':      '#616161',
+}
+
+LABELS = {
+    'idle':         'Grunt Dictation — idle',
+    'recording':    'Grunt Dictation — recording',
+    'transcribing': 'Grunt Dictation — transcribing',
+    'stopped':      'Grunt Dictation — stopped',
+}
+
+SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22">'
+    '<rect x="9" y="2" width="6" height="11" rx="3" fill="{c}"/>'
+    '<path d="M5 11a7 7 0 0 0 14 0" stroke="{c}" stroke-width="2"'
+    ' fill="none" stroke-linecap="round"/>'
+    '<line x1="12" y1="18" x2="12" y2="22" stroke="{c}"'
+    ' stroke-width="2" stroke-linecap="round"/>'
+    '<line x1="8" y1="22" x2="16" y2="22" stroke="{c}"'
+    ' stroke-width="2" stroke-linecap="round"/>'
+    '</svg>'
+)
+
+_icon_files = {}  # type: dict
+
+
+def get_icon(state: str) -> str:
+    color = COLORS.get(state, COLORS['idle'])
+    if color not in _icon_files:
+        f = tempfile.NamedTemporaryFile(
+            suffix='.svg', delete=False, mode='w', prefix='grunt-dic-'
+        )
+        f.write(SVG.format(c=color))
+        f.close()
+        _icon_files[color] = f.name
+    return _icon_files[color]
+
+
+def read_state() -> str:
+    try:
+        with open(STATE_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return 'idle'
+
+
+def send_ctl(cmd: str) -> None:
+    subprocess.Popen(['grunt-dictationctl', cmd],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+import gi
+
+AppIndicator = None
+for _lib in ('AyatanaAppIndicator3', 'AppIndicator3'):
+    try:
+        gi.require_version(_lib, '0.1')
+        gi.require_version('Gtk', '3.0')
+        from gi.repository import Gtk, GLib  # type: ignore
+        if _lib == 'AyatanaAppIndicator3':
+            from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore
+        else:
+            from gi.repository import AppIndicator3 as AppIndicator  # type: ignore
+        break
+    except Exception:
+        continue
+
+if AppIndicator is None:
+    print('grunt-dictation-indicator: AppIndicator library not found.', file=sys.stderr)
+    print('  Ubuntu: sudo apt install gir1.2-ayatanaappindicator3-0.1', file=sys.stderr)
+    print('  Arch:   sudo pacman -S libayatana-appindicator', file=sys.stderr)
+    sys.exit(1)
+
+
+def build_menu() -> 'Gtk.Menu':
+    menu = Gtk.Menu()
+
+    item_toggle = Gtk.MenuItem(label='Toggle recording')
+    item_toggle.connect('activate', lambda _: send_ctl('toggle'))
+    menu.append(item_toggle)
+
+    item_type = Gtk.MenuItem(label='Type transcript')
+    item_type.connect('activate', lambda _: send_ctl('type-text'))
+    menu.append(item_type)
+
+    item_copy = Gtk.MenuItem(label='Copy transcript')
+    item_copy.connect('activate', lambda _: send_ctl('copy-text'))
+    menu.append(item_copy)
+
+    menu.append(Gtk.SeparatorMenuItem())
+
+    item_quit = Gtk.MenuItem(label='Quit indicator')
+    item_quit.connect('activate', lambda _: Gtk.main_quit())
+    menu.append(item_quit)
+
+    menu.show_all()
+    return menu
+
+
+def main() -> None:
+    indicator = AppIndicator.Indicator.new(
+        'grunt-dictation',
+        get_icon('idle'),
+        AppIndicator.IndicatorCategory.APPLICATION_STATUS,
+    )
+    indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+    indicator.set_menu(build_menu())
+
+    last_state: list[str] = [None]
+
+    def poll() -> bool:
+        state = read_state()
+        if state != last_state[0]:
+            indicator.set_icon_full(get_icon(state), LABELS.get(state, state))
+            last_state[0] = state
+        return True
+
+    poll()
+    GLib.timeout_add(POLL_MS, poll)
+    Gtk.main()
+
+
+if __name__ == '__main__':
+    main()

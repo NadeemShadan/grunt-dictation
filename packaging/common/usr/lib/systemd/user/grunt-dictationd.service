@@ -7,6 +7,8 @@ Type=simple
 ExecStart=/usr/lib/grunt-dictation/grunt-dictationd.sh
 Restart=on-failure
 RestartSec=2
+CPUWeight=20
+IOSchedulingClass=idle
 Environment=GRUNT_DICTATION_CONFIG=/etc/grunt-dictation/default.env
 
 [Install]

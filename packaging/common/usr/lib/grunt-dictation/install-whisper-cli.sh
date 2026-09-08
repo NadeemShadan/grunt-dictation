@@ -73,6 +73,19 @@ warn_if_placeholder() {
     echo "  Or set WHISPER_CLI_URL_TEMPLATE in /etc/grunt-dictation/default.env to enable download." >&2
     return 1
   fi
+
+  if ! "$bin" --version >/dev/null 2>&1; then
+    echo "warning: $bin could not run on this machine." >&2
+    return 1
+  fi
+
+  local linkage
+  linkage="$(ldd "$bin" 2>&1 || true)"
+  if grep -Eq 'libwhisper|libggml|not found' <<< "$linkage"; then
+    echo "warning: $bin depends on shared libraries that are not installed:" >&2
+    grep -E 'libwhisper|libggml|not found' <<< "$linkage" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -84,9 +97,13 @@ install_bundled() {
     return 1
   fi
 
-  install -m755 "$bundled" "$TARGET_BIN"
-  echo "installed bundled whisper-cli for $arch at $TARGET_BIN"
-  warn_if_placeholder "$TARGET_BIN" || true
+  if [[ ! -x "$TARGET_BIN" ]] || ! cmp -s "$bundled" "$TARGET_BIN"; then
+    install -m755 "$bundled" "$TARGET_BIN"
+    echo "installed bundled whisper-cli for $arch at $TARGET_BIN"
+  else
+    echo "bundled whisper-cli for $arch is already installed at $TARGET_BIN"
+  fi
+  warn_if_placeholder "$TARGET_BIN"
 }
 
 install_downloaded() {
@@ -103,7 +120,7 @@ install_downloaded() {
 
   download_with_curl_or_wget "$url" "$TARGET_BIN"
   echo "downloaded whisper-cli for $arch from $url"
-  warn_if_placeholder "$TARGET_BIN" || true
+  warn_if_placeholder "$TARGET_BIN"
 }
 
 while [[ $# -gt 0 ]]; do

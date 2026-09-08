@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 COMMON_DIR="$ROOT_DIR/packaging/common"
+WHISPER_VALIDATOR="$COMMON_DIR/validate-whisper-cli.sh"
 
 case "$(uname -m)" in
   x86_64)
@@ -54,6 +55,7 @@ ensure_real_whisper_cli() {
 }
 
 ensure_real_whisper_cli "$WHISPER_VENDOR_PATH" "$WHISPER_ARCH_KEY"
+bash "$WHISPER_VALIDATOR" "$WHISPER_VENDOR_PATH"
 
 cd "$(dirname "$0")"
 makepkg -f

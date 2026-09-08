@@ -9,4 +9,4 @@ Recommends: xdotool, wl-clipboard | xclip, wtype | ydotool, curl | wget, gir1.2-
 Description: OS-level dictation helper using ffmpeg and whisper.cpp
  Standalone speech-to-text helper for Linux desktops.
  It runs as a user service, records audio, transcribes with whisper.cpp,
- and injects text into the focused input via desktop-specific tools.
+ and pastes text into the focused input through the desktop clipboard.

@@ -3,10 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 COMMON_DIR="$ROOT_DIR/packaging/common"
+WHISPER_VALIDATOR="$COMMON_DIR/validate-whisper-cli.sh"
 DEB_DIR="$ROOT_DIR/packaging/deb"
 OUT_DIR="$ROOT_DIR/dist/deb"
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.1.1}"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 PKG_ROOT="$OUT_DIR/grunt-dictation_${VERSION}_${ARCH}"
 WHISPER_VENDOR_PATH=""
@@ -68,6 +69,7 @@ ensure_real_whisper_cli() {
 }
 
 ensure_real_whisper_cli "$WHISPER_VENDOR_PATH" "$WHISPER_ARCH_KEY"
+bash "$WHISPER_VALIDATOR" "$WHISPER_VENDOR_PATH"
 
 rm -rf "$PKG_ROOT"
 mkdir -p "$PKG_ROOT/DEBIAN"

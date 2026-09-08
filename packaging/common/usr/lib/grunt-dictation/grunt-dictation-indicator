@@ -106,7 +106,7 @@ def build_menu() -> 'Gtk.Menu':
     item_toggle.connect('activate', lambda _: send_ctl('toggle'))
     menu.append(item_toggle)
 
-    item_type = Gtk.MenuItem(label='Type transcript')
+    item_type = Gtk.MenuItem(label='Paste transcript')
     item_type.connect('activate', lambda _: send_ctl('type-text'))
     menu.append(item_type)
 

@@ -12,6 +12,11 @@ MODEL_PATH="${MODEL_PATH:-$HOME/.local/share/grunt-dictation/models/ggml-base.en
 AUDIO_DEVICE="${AUDIO_DEVICE:-default}"
 AUDIO_FORMAT="${AUDIO_FORMAT:-auto}"
 MAX_RECORD_SECONDS="${MAX_RECORD_SECONDS:-300}"
+WHISPER_THREADS="${WHISPER_THREADS:-2}"
+WHISPER_NICE_LEVEL="${WHISPER_NICE_LEVEL:-10}"
+WHISPER_LANGUAGE="${WHISPER_LANGUAGE:-en}"
+AUTO_PASTE="${AUTO_PASTE:-true}"
+DICTATION_CONTROL="${DICTATION_CONTROL:-grunt-dictationctl}"
 RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
 RUNTIME_DIR="${RUNTIME_DIR:-$RUNTIME_ROOT/grunt-dictation}"
 
@@ -25,9 +30,6 @@ TIMER_PID_FILE="$RUNTIME_DIR/timer.pid"
 LOG_FILE="$RUNTIME_DIR/dictationd.log"
 
 NOTIF_ID_FILE="$RUNTIME_DIR/notif.id"
-
-mkdir -p "$RUNTIME_DIR"
-: > "$LOG_FILE"
 
 log() {
   local message="$1"
@@ -71,9 +73,37 @@ cancel_timer() {
   if [[ -f "$TIMER_PID_FILE" ]]; then
     local timer_pid
     timer_pid="$(cat "$TIMER_PID_FILE" 2>/dev/null || true)"
-    [[ -n "$timer_pid" ]] && kill "$timer_pid" 2>/dev/null || true
+    if [[ -n "$timer_pid" ]]; then
+      kill -TERM "$timer_pid" 2>/dev/null || true
+      wait "$timer_pid" 2>/dev/null || true
+    fi
     rm -f "$TIMER_PID_FILE"
   fi
+}
+
+start_recording_timer() {
+  (
+    local sleep_pid=""
+
+    stop_timer_sleep() {
+      if [[ -n "$sleep_pid" ]]; then
+        kill -TERM "$sleep_pid" 2>/dev/null || true
+        wait "$sleep_pid" 2>/dev/null || true
+      fi
+    }
+
+    trap 'stop_timer_sleep; exit 0' INT TERM
+    sleep "$MAX_RECORD_SECONDS" &
+    sleep_pid="$!"
+    wait "$sleep_pid" || exit 0
+    sleep_pid=""
+
+    touch "$RUNTIME_DIR/timed_out"
+    printf 'record-stop\n' > "$CONTROL_FIFO" 2>/dev/null
+  ) &
+
+  printf '%s\n' "$!" > "$TIMER_PID_FILE"
+  log "auto-stop timer set for ${MAX_RECORD_SECONDS}s"
 }
 
 is_recording() {
@@ -102,12 +132,46 @@ start_recording() {
   log "recording started (pid=$!, format=$fmt)"
   notify_state "Recording" "Microphone is active"
 
-  # Auto-stop after MAX_RECORD_SECONDS
-  ( sleep "$MAX_RECORD_SECONDS" \
-      && touch "$RUNTIME_DIR/timed_out" \
-      && printf 'record-stop\n' > "$CONTROL_FIFO" 2>/dev/null ) &
-  printf '%s\n' "$!" > "$TIMER_PID_FILE"
-  log "auto-stop timer set for ${MAX_RECORD_SECONDS}s"
+  start_recording_timer
+}
+
+normalize_transcript_file() {
+  local source_file="$1"
+  local target_file="$2"
+
+  awk '
+    {
+      gsub(/\r/, "")
+      gsub(/^[[:space:]]+/, "")
+      gsub(/[[:space:]]+$/, "")
+      if (length($0) > 0) {
+        if (has_text) {
+          printf " "
+        }
+        printf "%s", $0
+        has_text = 1
+      }
+    }
+    END {
+      if (has_text) {
+        printf "\n"
+      }
+    }
+  ' "$source_file" > "$target_file"
+}
+
+remove_recording_files() {
+  rm -f "$RAW_WAV" "${TRANSCRIPT_BASENAME}.txt"
+}
+
+paste_transcript() {
+  if "$DICTATION_CONTROL" type-text >/dev/null 2>&1; then
+    log "transcript pasted into focused application"
+    return 0
+  fi
+
+  log "automatic paste failed; transcript remains available"
+  return 1
 }
 
 stop_recording() {
@@ -140,39 +204,69 @@ stop_recording() {
 
   if [[ ! -s "$RAW_WAV" ]]; then
     log "no audio captured"
-    : > "$TRANSCRIPT_FILE"
+    remove_recording_files
+    notify_state "No speech captured" "The previous transcript was preserved"
     set_state "idle"
     return 0
   fi
 
   if [[ ! -x "$WHISPER_CLI" ]]; then
     log "whisper-cli not executable at $WHISPER_CLI"
-    : > "$TRANSCRIPT_FILE"
+    remove_recording_files
     set_state "idle"
     return 1
   fi
 
   if [[ ! -f "$MODEL_PATH" ]]; then
     log "model missing at $MODEL_PATH"
-    : > "$TRANSCRIPT_FILE"
+    remove_recording_files
     set_state "idle"
     return 1
   fi
 
   rm -f "${TRANSCRIPT_BASENAME}.txt"
-  "$WHISPER_CLI" -m "$MODEL_PATH" -f "$RAW_WAV" --output-txt --output-file "$TRANSCRIPT_BASENAME" >>"$LOG_FILE" 2>&1
+  local transcript_updated=false
+  local whisper_exit_code=0
+  nice -n "$WHISPER_NICE_LEVEL" "$WHISPER_CLI" \
+    -m "$MODEL_PATH" \
+    -f "$RAW_WAV" \
+    -t "$WHISPER_THREADS" \
+    -l "$WHISPER_LANGUAGE" \
+    --no-prints \
+    --output-txt \
+    --output-file "$TRANSCRIPT_BASENAME" \
+    >/dev/null 2>>"$LOG_FILE" || whisper_exit_code="$?"
 
-  if [[ -s "${TRANSCRIPT_BASENAME}.txt" ]]; then
-    tr -d '\r' < "${TRANSCRIPT_BASENAME}.txt" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' > "$TRANSCRIPT_FILE"
+  if [[ "$whisper_exit_code" -eq 0 && -s "${TRANSCRIPT_BASENAME}.txt" ]]; then
+    local transcript_candidate
+    transcript_candidate="$(mktemp "$RUNTIME_DIR/transcript.candidate.XXXXXX")"
+    normalize_transcript_file "${TRANSCRIPT_BASENAME}.txt" "$transcript_candidate"
+
+    if [[ -s "$transcript_candidate" ]]; then
+      mv "$transcript_candidate" "$TRANSCRIPT_FILE"
+      transcript_updated=true
+    else
+      rm -f "$transcript_candidate"
+    fi
+  fi
+
+  remove_recording_files
+
+  if [[ "$whisper_exit_code" -ne 0 ]]; then
+    log "transcription failed (exit=$whisper_exit_code); previous transcript preserved"
+    notify_state "Transcription failed" "The previous transcript was preserved"
+  elif [[ "$transcript_updated" == true ]]; then
     log "transcription completed"
-    local preview
-    preview="$(head -c 120 "$TRANSCRIPT_FILE")"
-    [[ "${#preview}" -ge 120 ]] && preview="${preview}…"
-    notify_state "Transcript ready" "$preview"
+    if [[ "$AUTO_PASTE" != "true" ]]; then
+      notify_state "Transcript ready" "Available to copy or paste"
+    elif paste_transcript; then
+      notify_state "Transcript ready" "Pasted into the focused application"
+    else
+      notify_state "Transcript ready" "Automatic paste failed; use copy-text"
+    fi
   else
-    : > "$TRANSCRIPT_FILE"
-    log "transcription produced no output"
-    notify_state "Transcript empty" "No speech detected"
+    log "transcription produced no output; previous transcript preserved"
+    notify_state "No speech detected" "The previous transcript was preserved"
   fi
 
   set_state "idle"
@@ -191,7 +285,8 @@ cleanup() {
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi
-  rm -f "$FFMPEG_PID_FILE" "$CONTROL_FIFO"
+  remove_recording_files
+  rm -f "$FFMPEG_PID_FILE" "$CONTROL_FIFO" "$RUNTIME_DIR/timed_out"
 }
 
 on_exit() {
@@ -200,39 +295,49 @@ on_exit() {
   log "daemon stopped"
 }
 
-trap on_exit EXIT INT TERM
+run_daemon() {
+  mkdir -p "$RUNTIME_DIR"
+  remove_recording_files
+  : > "$LOG_FILE"
+  touch "$TRANSCRIPT_FILE"
 
-rm -f "$CONTROL_FIFO"
-mkfifo "$CONTROL_FIFO"
-: > "$TRANSCRIPT_FILE"
-set_state "idle"
-log "daemon started"
+  trap on_exit EXIT INT TERM
 
-while true; do
-  if ! IFS= read -r command < "$CONTROL_FIFO"; then
-    sleep 0.1
-    continue
-  fi
+  rm -f "$CONTROL_FIFO"
+  mkfifo "$CONTROL_FIFO"
+  set_state "idle"
+  log "daemon started"
 
-  case "$command" in
-    record-start)
-      start_recording
-      ;;
-    record-stop)
-      stop_recording
-      ;;
-    clear-text)
-      clear_transcript
-      ;;
-    quit)
-      log "quit requested"
-      break
-      ;;
-    status)
-      # state is always written to STATE_FILE; command kept for compatibility
-      ;;
-    *)
-      log "unknown command: $command"
-      ;;
-  esac
-done
+  while true; do
+    if ! IFS= read -r command < "$CONTROL_FIFO"; then
+      sleep 0.1
+      continue
+    fi
+
+    case "$command" in
+      record-start)
+        start_recording
+        ;;
+      record-stop)
+        stop_recording
+        ;;
+      clear-text)
+        clear_transcript
+        ;;
+      quit)
+        log "quit requested"
+        break
+        ;;
+      status)
+        # state is always written to STATE_FILE; command kept for compatibility
+        ;;
+      *)
+        log "unknown command: $command"
+        ;;
+    esac
+  done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_daemon
+fi

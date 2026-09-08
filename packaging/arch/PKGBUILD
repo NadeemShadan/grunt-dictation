@@ -1,15 +1,15 @@
 pkgname=grunt-dictation
-pkgver=0.1.0
-pkgrel=1
+pkgver=0.1.1
+pkgrel=2
 pkgdesc="OS-level dictation helper using ffmpeg + whisper.cpp"
 arch=('x86_64' 'aarch64')
 url="https://github.com/nadeemshadan/grunt-dictation"
 license=('MIT')
 depends=('bash' 'ffmpeg' 'glibc' 'systemd')
 optdepends=(
-  'xdotool: text injection on X11 desktops'
-  'wtype: text injection on wlroots-based Wayland desktops'
-  'ydotool: text injection fallback for Wayland/KDE'
+  'xdotool: clipboard paste on X11 desktops'
+  'wtype: clipboard paste on wlroots-based Wayland desktops'
+  'ydotool: clipboard paste fallback for Wayland/KDE'
   'wl-clipboard: clipboard integration on Wayland'
   'xclip: clipboard integration on X11'
   'python-gobject: tray indicator'
@@ -39,6 +39,8 @@ package() {
       return 1
       ;;
   esac
+
+  bash "$common_dir/validate-whisper-cli.sh" "$whisper_src"
 
   install -Dm755 "$common_dir/usr/bin/grunt-dictationctl" "$pkgdir/usr/bin/grunt-dictationctl"
   install -Dm755 "$common_dir/usr/lib/grunt-dictation/grunt-dictationd.sh" "$pkgdir/usr/lib/grunt-dictation/grunt-dictationd.sh"

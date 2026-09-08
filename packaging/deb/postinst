@@ -13,7 +13,7 @@ First-time setup (run as your normal user, not root):
 
 Basic commands:
   grunt-dictationctl toggle     # start / stop recording
-  grunt-dictationctl type-text  # type transcript into focused window
+  grunt-dictationctl type-text  # paste transcript into focused window
   grunt-dictationctl copy-text  # copy transcript to clipboard
 MSG
 

@@ -6,8 +6,7 @@ Wants=grunt-dictationd.service
 [Service]
 Type=simple
 ExecStart=/usr/lib/grunt-dictation/grunt-dictation-indicator
-Restart=on-failure
-RestartSec=3
+Restart=no
 
 [Install]
 WantedBy=graphical-session.target

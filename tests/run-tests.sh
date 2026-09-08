@@ -163,4 +163,77 @@ env -u RUNTIME_DIR \
 assert_file_content 'Clipboard paste preserves every character.' "$TEST_CLIPBOARD_CAPTURE"
 assert_file_content 'key --clearmodifiers ctrl+v' "$TEST_KEY_CAPTURE"
 
+MODEL_TEST_HOME="$TEST_ROOT/model-home"
+MODEL_TEST_CONFIG="$MODEL_TEST_HOME/config/grunt-dictation/config.env"
+MODEL_TEST_DATA="$MODEL_TEST_HOME/data"
+mkdir -p "$(dirname "$MODEL_TEST_CONFIG")" "$MODEL_TEST_DATA/grunt-dictation/models"
+printf 'AUTO_PASTE=false\n' > "$MODEL_TEST_CONFIG"
+touch "$MODEL_TEST_DATA/grunt-dictation/models/ggml-small.en.bin"
+
+env -u GRUNT_DICTATION_CONFIG -u MODEL_PATH -u WHISPER_MODEL_URL -u WHISPER_LANGUAGE \
+  HOME="$MODEL_TEST_HOME" \
+  XDG_CONFIG_HOME="$MODEL_TEST_HOME/config" \
+  XDG_DATA_HOME="$MODEL_TEST_DATA" \
+  GRUNT_DICTATION_SYSTEM_CONFIG=/dev/null \
+  PATH="$FAKE_BIN:/usr/bin" \
+  "$ROOT_DIR/packaging/common/usr/bin/grunt-dictationctl" model use small.en \
+  > "$TEST_ROOT/model-use-output.txt"
+
+grep -q '^AUTO_PASTE=false$' "$MODEL_TEST_CONFIG" || \
+  fail "model selection discarded an unrelated per-user setting"
+grep -q "^MODEL_PATH=$MODEL_TEST_DATA/grunt-dictation/models/ggml-small.en.bin$" "$MODEL_TEST_CONFIG" || \
+  fail "model selection did not save the selected model path"
+grep -q '^WHISPER_LANGUAGE=en$' "$MODEL_TEST_CONFIG" || \
+  fail "English model did not select English transcription"
+
+MODEL_STATUS="$(
+  env -u GRUNT_DICTATION_CONFIG -u MODEL_PATH -u WHISPER_MODEL_URL -u WHISPER_LANGUAGE \
+    HOME="$MODEL_TEST_HOME" \
+    XDG_CONFIG_HOME="$MODEL_TEST_HOME/config" \
+    XDG_DATA_HOME="$MODEL_TEST_DATA" \
+    GRUNT_DICTATION_SYSTEM_CONFIG=/dev/null \
+    "$ROOT_DIR/packaging/common/usr/bin/grunt-dictationctl" model status
+)"
+grep -q '^active_model=small.en$' <<< "$MODEL_STATUS" || \
+  fail "per-user model configuration was not loaded"
+
+if env -u GRUNT_DICTATION_CONFIG -u MODEL_PATH -u WHISPER_MODEL_URL -u WHISPER_LANGUAGE \
+    HOME="$MODEL_TEST_HOME" \
+    XDG_CONFIG_HOME="$MODEL_TEST_HOME/config" \
+    XDG_DATA_HOME="$MODEL_TEST_DATA" \
+    GRUNT_DICTATION_SYSTEM_CONFIG=/dev/null \
+    "$ROOT_DIR/packaging/common/usr/bin/grunt-dictationctl" model remove small.en \
+    >/dev/null 2>&1; then
+  fail "active model was allowed to be removed"
+fi
+[[ -f "$MODEL_TEST_DATA/grunt-dictation/models/ggml-small.en.bin" ]] || \
+  fail "active model file was removed"
+
+DAEMON_TEST_RUNTIME="$TEST_ROOT/daemon-runtime"
+env \
+  GRUNT_DICTATION_CONFIG=/dev/null \
+  RUNTIME_DIR="$DAEMON_TEST_RUNTIME" \
+  AUTO_PASTE=false \
+  "$ROOT_DIR/packaging/common/usr/lib/grunt-dictation/grunt-dictationd.sh" &
+daemon_pid="$!"
+BACKGROUND_PIDS+=("$daemon_pid")
+
+for _ in {1..20}; do
+  [[ -p "$DAEMON_TEST_RUNTIME/control.fifo" ]] && break
+  sleep 0.05
+done
+[[ -p "$DAEMON_TEST_RUNTIME/control.fifo" ]] || fail "daemon did not create its control FIFO"
+
+kill -TERM "$daemon_pid"
+for _ in {1..20}; do
+  kill -0 "$daemon_pid" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$daemon_pid" 2>/dev/null; then
+  fail "daemon did not stop promptly after SIGTERM"
+fi
+wait "$daemon_pid"
+assert_file_content 'stopped' "$DAEMON_TEST_RUNTIME/state"
+[[ ! -e "$DAEMON_TEST_RUNTIME/control.fifo" ]] || fail "daemon left its control FIFO after shutdown"
+
 echo "All grunt-dictation tests passed."

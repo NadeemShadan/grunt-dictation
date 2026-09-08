@@ -1,6 +1,6 @@
-# grunt-dictation
+# Grunt
 
-OS-level speech-to-text for Linux desktops. Records audio, transcribes with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and types or copies the result.
+Private, offline dictation for Linux. Grunt records audio, transcribes it locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and pastes or copies the result.
 
 Runs as a per-user systemd service. Transcription stays on the machine, and the CPU-intensive `whisper-cli` process runs only when a recording is submitted.
 
@@ -34,7 +34,21 @@ Run this once as your normal user (not root):
 grunt-dictationctl setup
 ```
 
-This enables the background service and downloads the speech model (~142 MB) in one step.
+Setup asks whether you need English-only or multilingual recognition, then offers three model sizes:
+
+| Profile | Model | Download | Approx. memory | Trade-off |
+|---|---|---:|---:|---|
+| Fast | `tiny.en` / `tiny` | 75 MiB | 273 MiB | Fastest, lowest accuracy |
+| Balanced | `base.en` / `base` | 142 MiB | 388 MiB | Recommended for most computers |
+| Accurate | `small.en` / `small` | 466 MiB | 852 MiB | Better recognition, slower on CPU |
+
+English-only models use the `.en` suffix. Setup then downloads the selected model and enables the background service. Package installation itself remains non-interactive.
+
+For an unattended installation, specify the model explicitly:
+
+```bash
+grunt-dictationctl setup --model base.en
+```
 
 ### Keyboard shortcuts
 
@@ -127,6 +141,18 @@ grunt-dictationctl clear-text     # clear transcript
 grunt-dictationctl list-devices   # list available microphones
 ```
 
+Model management:
+
+```bash
+grunt-dictationctl model list
+grunt-dictationctl model install small.en
+grunt-dictationctl model use small.en
+grunt-dictationctl model status
+grunt-dictationctl model remove tiny.en
+```
+
+Changing the active model restarts the service when it is running. Downloaded models are retained until explicitly removed, so switching back does not require another download. The active model cannot be removed.
+
 Service management:
 
 ```bash
@@ -145,7 +171,7 @@ grunt-dictationctl show-runtime
 
 ### Configuration
 
-Edit `/etc/grunt-dictation/default.env` to override any setting:
+System defaults live in `/etc/grunt-dictation/default.env`. The model selected during setup is stored per user in `~/.config/grunt-dictation/config.env`; per-user values take precedence over system defaults.
 
 ```bash
 # Audio input device — run `grunt-dictationctl list-devices` to see options

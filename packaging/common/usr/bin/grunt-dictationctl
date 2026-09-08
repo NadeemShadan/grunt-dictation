@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_FILE="${GRUNT_DICTATION_CONFIG:-/etc/grunt-dictation/default.env}"
-if [[ -f "$CONFIG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$CONFIG_FILE"
+SYSTEM_CONFIG_FILE="${GRUNT_DICTATION_SYSTEM_CONFIG:-/etc/grunt-dictation/default.env}"
+USER_CONFIG_FILE="${GRUNT_DICTATION_USER_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/grunt-dictation/config.env}"
+
+if [[ -n "${GRUNT_DICTATION_CONFIG:-}" ]]; then
+  if [[ -f "$GRUNT_DICTATION_CONFIG" ]]; then
+    # shellcheck disable=SC1090
+    source "$GRUNT_DICTATION_CONFIG"
+  fi
+else
+  if [[ -f "$SYSTEM_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$SYSTEM_CONFIG_FILE"
+  fi
+  if [[ -f "$USER_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$USER_CONFIG_FILE"
+  fi
 fi
 
 RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/tmp}"
@@ -21,7 +34,8 @@ PASTE_DELAY_SECONDS="${PASTE_DELAY_SECONDS:-0.35}"
 print_usage() {
   cat <<'USAGE'
 Usage:
-  grunt-dictationctl setup             # first-time setup: enable and start service
+  grunt-dictationctl setup [--model MODEL]
+                                         # choose a model, then enable the service
 
   grunt-dictationctl toggle            # start recording if idle, stop if recording
 
@@ -39,9 +53,223 @@ Usage:
   grunt-dictationctl service-stop
   grunt-dictationctl service-status
 
-  grunt-dictationctl download-model    # download default ggml-base.en model
+  grunt-dictationctl model list
+  grunt-dictationctl model install MODEL
+  grunt-dictationctl model use MODEL
+  grunt-dictationctl model remove MODEL
+  grunt-dictationctl model status
+
+  grunt-dictationctl download-model      # download the configured/custom model
   grunt-dictationctl list-devices      # list available microphones
 USAGE
+}
+
+model_details() {
+  case "$1" in
+    tiny.en)  printf '%s\n' 'English|Fast|75 MiB|~273 MiB RAM|en' ;;
+    base.en)  printf '%s\n' 'English|Balanced|142 MiB|~388 MiB RAM|en' ;;
+    small.en) printf '%s\n' 'English|Accurate|466 MiB|~852 MiB RAM|en' ;;
+    tiny)     printf '%s\n' 'Multilingual|Fast|75 MiB|~273 MiB RAM|auto' ;;
+    base)     printf '%s\n' 'Multilingual|Balanced|142 MiB|~388 MiB RAM|auto' ;;
+    small)    printf '%s\n' 'Multilingual|Accurate|466 MiB|~852 MiB RAM|auto' ;;
+    *) return 1 ;;
+  esac
+}
+
+require_supported_model() {
+  if ! model_details "$1" >/dev/null; then
+    echo "unsupported model: $1" >&2
+    echo "Run 'grunt-dictationctl model list' to see supported models." >&2
+    exit 1
+  fi
+}
+
+model_path() {
+  printf '%s/grunt-dictation/models/ggml-%s.bin\n' \
+    "${XDG_DATA_HOME:-$HOME/.local/share}" "$1"
+}
+
+model_url() {
+  printf 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-%s.bin\n' "$1"
+}
+
+configured_model() {
+  local filename
+  filename="$(basename "$MODEL_PATH")"
+  if [[ "$filename" == ggml-*.bin ]]; then
+    filename="${filename#ggml-}"
+    printf '%s\n' "${filename%.bin}"
+  else
+    printf '%s\n' custom
+  fi
+}
+
+model_list() {
+  local model details language profile download memory state
+  printf '%-10s %-13s %-10s %-10s %-13s %s\n' \
+    MODEL LANGUAGE PROFILE DOWNLOAD MEMORY STATUS
+  for model in tiny.en base.en small.en tiny base small; do
+    IFS='|' read -r language profile download memory _ <<< "$(model_details "$model")"
+    state=""
+    [[ -f "$(model_path "$model")" ]] && state="installed"
+    [[ "$(model_path "$model")" == "$MODEL_PATH" ]] && state="${state:+$state, }active"
+    [[ "$model" == base.en || "$model" == base ]] && profile="$profile*"
+    printf '%-10s %-13s %-10s %-10s %-13s %s\n' \
+      "$model" "$language" "$profile" "$download" "$memory" "$state"
+  done
+  echo "* recommended for most computers"
+}
+
+download_model_file() {
+  local destination="$1"
+  local url="$2"
+  local checksum="${3:-}"
+  local model_dir temporary_path
+  model_dir="$(dirname "$destination")"
+
+  if [[ -f "$destination" ]]; then
+    echo "model already present at $destination"
+    return 0
+  fi
+
+  mkdir -p "$model_dir"
+  temporary_path="${destination}.part.$$"
+  rm -f "$temporary_path"
+  echo "downloading model to $destination ..."
+
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fL "$url" -o "$temporary_path"; then
+      rm -f "$temporary_path"
+      return 1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if ! wget -O "$temporary_path" "$url"; then
+      rm -f "$temporary_path"
+      return 1
+    fi
+  else
+    echo "neither curl nor wget found; cannot download model." >&2
+    exit 1
+  fi
+
+  if [[ -n "$checksum" ]]; then
+    echo "verifying checksum..."
+    if ! echo "$checksum  $temporary_path" | sha256sum --check --quiet 2>/dev/null; then
+      echo "checksum mismatch — removing download" >&2
+      rm -f "$temporary_path"
+      return 1
+    fi
+    echo "checksum ok"
+  fi
+
+  mv "$temporary_path" "$destination"
+  echo "model ready at $destination"
+}
+
+model_install() {
+  local model="$1"
+  require_supported_model "$model"
+  download_model_file "$(model_path "$model")" "$(model_url "$model")"
+}
+
+write_model_config() {
+  local model="$1"
+  local details language config_dir temporary_config
+  details="$(model_details "$model")"
+  language="${details##*|}"
+  config_dir="$(dirname "$USER_CONFIG_FILE")"
+
+  mkdir -p "$config_dir"
+  temporary_config="$(mktemp "$config_dir/config.env.XXXXXX")"
+  {
+    if [[ -f "$USER_CONFIG_FILE" ]]; then
+      awk '!/^(MODEL_PATH|WHISPER_MODEL_URL|WHISPER_MODEL_SHA256|WHISPER_LANGUAGE)=/' "$USER_CONFIG_FILE"
+    else
+      printf '# Per-user Grunt settings. Values here override system defaults.\n'
+    fi
+    printf 'MODEL_PATH=%q\n' "$(model_path "$model")"
+    printf 'WHISPER_MODEL_URL=%q\n' "$(model_url "$model")"
+    printf 'WHISPER_MODEL_SHA256=\n'
+    printf 'WHISPER_LANGUAGE=%q\n' "$language"
+  } > "$temporary_config"
+  chmod 600 "$temporary_config"
+  mv "$temporary_config" "$USER_CONFIG_FILE"
+}
+
+model_use() {
+  local model="$1"
+  local path
+  require_supported_model "$model"
+  path="$(model_path "$model")"
+  if [[ ! -f "$path" ]]; then
+    echo "model $model is not installed." >&2
+    echo "Install it with: grunt-dictationctl model install $model" >&2
+    exit 1
+  fi
+
+  write_model_config "$model"
+  MODEL_PATH="$path"
+  echo "active model: $model"
+  echo "user configuration: $USER_CONFIG_FILE"
+  if systemctl --user --quiet is-active "$SERVICE_NAME" 2>/dev/null; then
+    systemctl --user restart "$SERVICE_NAME"
+    echo "grunt-dictation service restarted."
+  fi
+}
+
+model_remove() {
+  local model="$1"
+  local path
+  require_supported_model "$model"
+  path="$(model_path "$model")"
+  if [[ "$path" == "$MODEL_PATH" ]]; then
+    echo "cannot remove the active model ($model). Activate another model first." >&2
+    exit 1
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo "model $model is not installed."
+    return 0
+  fi
+  rm -f "$path"
+  echo "removed model: $model"
+}
+
+model_status() {
+  local model
+  model="$(configured_model)"
+  echo "active_model=$model"
+  echo "model_path=$MODEL_PATH"
+  echo "installed=$([[ -f "$MODEL_PATH" ]] && echo true || echo false)"
+  echo "language=${WHISPER_LANGUAGE:-en}"
+  echo "user_config=$USER_CONFIG_FILE"
+}
+
+choose_model() {
+  local language_choice model_choice suffix
+  echo "What will you primarily dictate?" >&2
+  echo "  1) English only" >&2
+  echo "  2) Multiple languages" >&2
+  read -r -p "Choose [1]: " language_choice
+  language_choice="${language_choice:-1}"
+  case "$language_choice" in
+    1) suffix=.en ;;
+    2) suffix= ;;
+    *) echo "invalid language choice: $language_choice" >&2; exit 1 ;;
+  esac
+
+  echo >&2
+  echo "Choose a recognition model:" >&2
+  echo "  1) Fast       tiny${suffix}    75 MiB   lowest accuracy" >&2
+  echo "  2) Balanced   base${suffix}   142 MiB   recommended" >&2
+  echo "  3) Accurate   small${suffix}  466 MiB   slower, better recognition" >&2
+  read -r -p "Choose [2]: " model_choice
+  model_choice="${model_choice:-2}"
+  case "$model_choice" in
+    1) printf 'tiny%s\n' "$suffix" ;;
+    2) printf 'base%s\n' "$suffix" ;;
+    3) printf 'small%s\n' "$suffix" ;;
+    *) echo "invalid model choice: $model_choice" >&2; exit 1 ;;
+  esac
 }
 
 service_status() {
@@ -151,46 +379,42 @@ toggle() {
 }
 
 setup() {
+  local requested_model=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model)
+        [[ $# -ge 2 ]] || { echo "--model requires a model name" >&2; exit 1; }
+        requested_model="$2"
+        shift 2
+        ;;
+      *) echo "unknown setup option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  if [[ -z "$requested_model" ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      requested_model="$(choose_model)"
+    else
+      requested_model="$(configured_model)"
+      [[ "$requested_model" != custom ]] || requested_model=base.en
+      echo "non-interactive setup: using model $requested_model"
+    fi
+  fi
+
+  require_supported_model "$requested_model"
+  model_install "$requested_model"
+  write_model_config "$requested_model"
+  MODEL_PATH="$(model_path "$requested_model")"
+
   systemctl --user daemon-reload
   systemctl --user enable --now "$SERVICE_NAME"
   systemctl --user enable --now grunt-dictation-indicator.service 2>/dev/null || \
     echo "note: tray indicator not started (install gir1.2-ayatanaappindicator3-0.1 to enable)"
-  echo "grunt-dictation service enabled and started."
-  download_model
+  echo "Grunt is ready with the $requested_model model."
 }
 
 download_model() {
-  local model_dir
-  model_dir="$(dirname "$MODEL_PATH")"
-
-  if [[ -f "$MODEL_PATH" ]]; then
-    echo "model already present at $MODEL_PATH"
-    return 0
-  fi
-
-  mkdir -p "$model_dir"
-  echo "downloading model to $MODEL_PATH ..."
-
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL "$WHISPER_MODEL_URL" -o "$MODEL_PATH"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "$MODEL_PATH" "$WHISPER_MODEL_URL"
-  else
-    echo "neither curl nor wget found; cannot download model." >&2
-    exit 1
-  fi
-
-  if [[ -n "$WHISPER_MODEL_SHA256" ]]; then
-    echo "verifying checksum..."
-    if ! echo "$WHISPER_MODEL_SHA256  $MODEL_PATH" | sha256sum --check --quiet 2>/dev/null; then
-      echo "checksum mismatch — removing download" >&2
-      rm -f "$MODEL_PATH"
-      exit 1
-    fi
-    echo "checksum ok"
-  fi
-
-  echo "model ready at $MODEL_PATH"
+  download_model_file "$MODEL_PATH" "$WHISPER_MODEL_URL" "$WHISPER_MODEL_SHA256"
 }
 
 list_devices() {
@@ -222,13 +446,26 @@ case "$command" in
     toggle
     ;;
   setup)
-    setup
+    shift
+    setup "$@"
     ;;
   download-model)
     download_model
     ;;
   list-devices)
     list_devices
+    ;;
+  model)
+    subcommand="${2:-}"
+    model="${3:-}"
+    case "$subcommand" in
+      list) model_list ;;
+      install) [[ -n "$model" ]] || { echo "model install requires a model name" >&2; exit 1; }; model_install "$model" ;;
+      use) [[ -n "$model" ]] || { echo "model use requires a model name" >&2; exit 1; }; model_use "$model" ;;
+      remove) [[ -n "$model" ]] || { echo "model remove requires a model name" >&2; exit 1; }; model_remove "$model" ;;
+      status) model_status ;;
+      *) echo "usage: grunt-dictationctl model {list|install|use|remove|status} [MODEL]" >&2; exit 1 ;;
+    esac
     ;;
   service-enable)
     systemctl --user daemon-reload

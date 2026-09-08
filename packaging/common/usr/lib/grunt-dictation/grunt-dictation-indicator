@@ -12,6 +12,7 @@ Requires AppIndicator3 or AyatanaAppIndicator3 (libayatana-appindicator).
 """
 
 import os
+import signal
 import sys
 import tempfile
 import subprocess
@@ -30,10 +31,10 @@ COLORS = {
 }
 
 LABELS = {
-    'idle':         'Grunt Dictation — idle',
-    'recording':    'Grunt Dictation — recording',
-    'transcribing': 'Grunt Dictation — transcribing',
-    'stopped':      'Grunt Dictation — stopped',
+    'idle':         'Grunt — idle',
+    'recording':    'Grunt — recording',
+    'transcribing': 'Grunt — transcribing',
+    'stopped':      'Grunt — stopped',
 }
 
 SVG = (
@@ -144,6 +145,13 @@ def main() -> None:
 
     poll()
     GLib.timeout_add(POLL_MS, poll)
+
+    def quit_indicator() -> bool:
+        Gtk.main_quit()
+        return GLib.SOURCE_REMOVE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, quit_indicator)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, quit_indicator)
     Gtk.main()
 
 

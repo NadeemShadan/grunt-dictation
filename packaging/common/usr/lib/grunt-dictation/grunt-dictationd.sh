@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 set -u -o pipefail
 
-CONFIG_FILE="${GRUNT_DICTATION_CONFIG:-/etc/grunt-dictation/default.env}"
-if [[ -f "$CONFIG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$CONFIG_FILE"
+SYSTEM_CONFIG_FILE="${GRUNT_DICTATION_SYSTEM_CONFIG:-/etc/grunt-dictation/default.env}"
+USER_CONFIG_FILE="${GRUNT_DICTATION_USER_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/grunt-dictation/config.env}"
+
+if [[ -n "${GRUNT_DICTATION_CONFIG:-}" ]]; then
+  if [[ -f "$GRUNT_DICTATION_CONFIG" ]]; then
+    # shellcheck disable=SC1090
+    source "$GRUNT_DICTATION_CONFIG"
+  fi
+else
+  if [[ -f "$SYSTEM_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$SYSTEM_CONFIG_FILE"
+  fi
+  if [[ -f "$USER_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$USER_CONFIG_FILE"
+  fi
 fi
 
 WHISPER_CLI="${WHISPER_CLI:-/usr/lib/grunt-dictation/whisper-cli}"
@@ -30,6 +43,7 @@ TIMER_PID_FILE="$RUNTIME_DIR/timer.pid"
 LOG_FILE="$RUNTIME_DIR/dictationd.log"
 
 NOTIF_ID_FILE="$RUNTIME_DIR/notif.id"
+CONTROL_FD_OPEN=false
 
 log() {
   local message="$1"
@@ -285,6 +299,10 @@ cleanup() {
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi
+  if [[ "$CONTROL_FD_OPEN" == true ]]; then
+    exec 3>&-
+    CONTROL_FD_OPEN=false
+  fi
   remove_recording_files
   rm -f "$FFMPEG_PID_FILE" "$CONTROL_FIFO" "$RUNTIME_DIR/timed_out"
 }
@@ -301,16 +319,18 @@ run_daemon() {
   : > "$LOG_FILE"
   touch "$TRANSCRIPT_FILE"
 
-  trap on_exit EXIT INT TERM
+  trap on_exit EXIT
+  trap 'exit 0' INT TERM
 
   rm -f "$CONTROL_FIFO"
   mkfifo "$CONTROL_FIFO"
+  exec 3<> "$CONTROL_FIFO"
+  CONTROL_FD_OPEN=true
   set_state "idle"
   log "daemon started"
 
   while true; do
-    if ! IFS= read -r command < "$CONTROL_FIFO"; then
-      sleep 0.1
+    if ! IFS= read -r -t 0.5 command <&3; then
       continue
     fi
 

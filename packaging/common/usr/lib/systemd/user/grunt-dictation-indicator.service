@@ -7,6 +7,7 @@ Wants=grunt-dictationd.service
 Type=simple
 ExecStart=/usr/lib/grunt-dictation/grunt-dictation-indicator
 Restart=no
+TimeoutStopSec=3
 
 [Install]
 WantedBy=graphical-session.target

@@ -1,7 +1,7 @@
 pkgname=grunt-dictation
 pkgver=0.1.1
-pkgrel=2
-pkgdesc="OS-level dictation helper using ffmpeg + whisper.cpp"
+pkgrel=6
+pkgdesc="Grunt — private, offline dictation for Linux"
 arch=('x86_64' 'aarch64')
 url="https://github.com/nadeemshadan/grunt-dictation"
 license=('MIT')

@@ -236,4 +236,24 @@ wait "$daemon_pid"
 assert_file_content 'stopped' "$DAEMON_TEST_RUNTIME/state"
 [[ ! -e "$DAEMON_TEST_RUNTIME/control.fifo" ]] || fail "daemon left its control FIFO after shutdown"
 
+DAEMON_SERVICE="$ROOT_DIR/packaging/common/usr/lib/systemd/user/grunt-dictationd.service"
+INDICATOR_SERVICE="$ROOT_DIR/packaging/common/usr/lib/systemd/user/grunt-dictation-indicator.service"
+if grep -q '^Environment=GRUNT_DICTATION_CONFIG=' "$DAEMON_SERVICE"; then
+  fail "daemon service overrides per-user model configuration"
+fi
+grep -q '^Restart=on-failure$' "$INDICATOR_SERVICE" || fail "tray crash recovery is disabled"
+grep -q '^Exec=grunt-dictationctl session-start$' \
+  "$ROOT_DIR/packaging/common/etc/xdg/autostart/grunt-dictation.desktop" || \
+  fail "desktop-session startup entry is missing"
+
+LOADED_MODEL="$(
+  env -u GRUNT_DICTATION_CONFIG -u MODEL_PATH -u WHISPER_LANGUAGE \
+    HOME="$MODEL_TEST_HOME" XDG_CONFIG_HOME="$MODEL_TEST_HOME/config" \
+    GRUNT_DICTATION_SYSTEM_CONFIG=/dev/null \
+    bash -c 'source "$1"; printf "%s" "$MODEL_PATH"' bash \
+    "$ROOT_DIR/packaging/common/usr/lib/grunt-dictation/grunt-dictationd.sh"
+)"
+[[ "$LOADED_MODEL" == "$MODEL_TEST_DATA/grunt-dictation/models/ggml-small.en.bin" ]] || \
+  fail "daemon did not load the per-user model"
+
 echo "All grunt-dictation tests passed."

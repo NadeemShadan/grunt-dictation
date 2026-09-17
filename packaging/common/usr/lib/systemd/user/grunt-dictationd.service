@@ -10,7 +10,6 @@ RestartSec=2
 TimeoutStopSec=3
 CPUWeight=20
 IOSchedulingClass=idle
-Environment=GRUNT_DICTATION_CONFIG=/etc/grunt-dictation/default.env
 
 [Install]
 WantedBy=default.target

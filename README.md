@@ -95,7 +95,7 @@ xfconf-query -c xfce4-keyboard-shortcuts \
 
 ### Tray indicator
 
-A microphone icon sits in your system tray and changes colour with recording state:
+A speech-bubble icon with waveform bars sits in your system tray and changes colour with recording state:
 
 | Colour | State |
 |---|---|
@@ -106,6 +106,8 @@ A microphone icon sits in your system tray and changes colour with recording sta
 Right-clicking the icon gives quick access to toggle, type, and copy.
 
 The indicator starts automatically with `grunt-dictationctl setup`. It requires an AppIndicator library:
+
+Grunt also registers a desktop-session autostart entry, including for XFCE sessions that do not activate systemd's `graphical-session.target`. It imports the current display environment before starting the services. The tray service restarts after crashes; deliberately choosing “Quit indicator” still stops it until the next session or manual restart.
 
 ```bash
 # Ubuntu / Kubuntu

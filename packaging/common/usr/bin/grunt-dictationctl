@@ -36,6 +36,7 @@ print_usage() {
 Usage:
   grunt-dictationctl setup [--model MODEL]
                                          # choose a model, then enable the service
+  grunt-dictationctl session-start        # start services with desktop environment
 
   grunt-dictationctl toggle            # start recording if idle, stop if recording
 
@@ -378,6 +379,18 @@ toggle() {
   fi
 }
 
+start_desktop_session() {
+  local variable
+  local desktop_variables=()
+  for variable in DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE; do
+    [[ -n "${!variable:-}" ]] && desktop_variables+=("$variable")
+  done
+  if [[ ${#desktop_variables[@]} -gt 0 ]]; then
+    systemctl --user import-environment "${desktop_variables[@]}"
+  fi
+  systemctl --user start "$SERVICE_NAME" grunt-dictation-indicator.service
+}
+
 setup() {
   local requested_model=""
   while [[ $# -gt 0 ]]; do
@@ -448,6 +461,9 @@ case "$command" in
   setup)
     shift
     setup "$@"
+    ;;
+  session-start)
+    start_desktop_session
     ;;
   download-model)
     download_model

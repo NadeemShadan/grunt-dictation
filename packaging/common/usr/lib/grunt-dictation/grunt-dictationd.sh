@@ -328,6 +328,7 @@ run_daemon() {
   CONTROL_FD_OPEN=true
   set_state "idle"
   log "daemon started"
+  log "model_path=$MODEL_PATH language=$WHISPER_LANGUAGE threads=$WHISPER_THREADS"
 
   while true; do
     if ! IFS= read -r -t 0.5 command <&3; then

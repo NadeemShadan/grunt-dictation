@@ -92,6 +92,7 @@ install -m755 "$COMMON_DIR/usr/lib/grunt-dictation/grunt-dictation-indicator" "$
 install -m644 "$COMMON_DIR/usr/lib/systemd/user/grunt-dictationd.service" "$PKG_ROOT/usr/lib/systemd/user/grunt-dictationd.service"
 install -m644 "$COMMON_DIR/usr/lib/systemd/user/grunt-dictation-indicator.service" "$PKG_ROOT/usr/lib/systemd/user/grunt-dictation-indicator.service"
 install -m644 "$COMMON_DIR/etc/grunt-dictation/default.env" "$PKG_ROOT/etc/grunt-dictation/default.env"
+install -Dm644 "$COMMON_DIR/etc/xdg/autostart/grunt-dictation.desktop" "$PKG_ROOT/etc/xdg/autostart/grunt-dictation.desktop"
 install -m644 "$ROOT_DIR/README.md" "$PKG_ROOT/usr/share/doc/grunt-dictation/README.md"
 install -m644 "$ROOT_DIR/LICENSE" "$PKG_ROOT/usr/share/doc/grunt-dictation/LICENSE"
 

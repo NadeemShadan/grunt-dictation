@@ -2,11 +2,13 @@
 Description=Grunt Dictation Tray Indicator
 After=graphical-session.target grunt-dictationd.service
 Wants=grunt-dictationd.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/lib/grunt-dictation/grunt-dictation-indicator
-Restart=no
+Restart=on-failure
+RestartSec=5
 TimeoutStopSec=3
 
 [Install]

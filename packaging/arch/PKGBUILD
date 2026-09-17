@@ -1,6 +1,6 @@
 pkgname=grunt-dictation
 pkgver=0.1.1
-pkgrel=6
+pkgrel=8
 pkgdesc="Grunt — private, offline dictation for Linux"
 arch=('x86_64' 'aarch64')
 url="https://github.com/nadeemshadan/grunt-dictation"
@@ -51,6 +51,7 @@ package() {
   install -Dm644 "$common_dir/usr/lib/systemd/user/grunt-dictationd.service" "$pkgdir/usr/lib/systemd/user/grunt-dictationd.service"
   install -Dm644 "$common_dir/usr/lib/systemd/user/grunt-dictation-indicator.service" "$pkgdir/usr/lib/systemd/user/grunt-dictation-indicator.service"
   install -Dm644 "$common_dir/etc/grunt-dictation/default.env" "$pkgdir/etc/grunt-dictation/default.env"
+  install -Dm644 "$common_dir/etc/xdg/autostart/grunt-dictation.desktop" "$pkgdir/etc/xdg/autostart/grunt-dictation.desktop"
   install -Dm644 "$startdir/../../README.md" "$pkgdir/usr/share/doc/grunt-dictation/README.md"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/grunt-dictation/LICENSE"
 }

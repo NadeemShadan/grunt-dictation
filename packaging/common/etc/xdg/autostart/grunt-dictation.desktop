@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Grunt
+Comment=Start private, offline dictation for this desktop session
+Exec=grunt-dictationctl session-start
+TryExec=grunt-dictationctl
+Terminal=false
